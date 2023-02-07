@@ -1,0 +1,539 @@
+---
+title: "Analysis of Cashew Truck Arrival"
+author: "Peter Charambira"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    fig_caption: yes
+    fig_height: 10
+    fig_width: 7
+    highlight: tango
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+---
+
+<center><img src="https://static.euronews.com/articles/589975/1024x538_589975.jpg?1542021383"></center>
+
+```{r setup, include=FALSE}
+options(width=100)
+knitr::opts_chunk$set(out.width='1000px', dpi=200, message=FALSE, warning=FALSE)
+```
+
+# Introduction
+
+This dataset contains information about deliveries of raw cashew nuts from the bush to port warehouses. The arrivals span three years and have around 200 arrivals per year.
+
+The plan is to find out:
+
+1) Who has made the most deliveries?
+2) When were the most deliveries made?
+3) When were the most bags delivered?
+4) What is the weight delivered?
+5) Which suppliers delivered the most?
+
+
+# Preparations {.tabset .tabset-fase .tabset-pills}
+
+## Load Libraries
+
+I am loading a few key libraries
+
+```{r message = FALSE}
+
+library("ggplot2")
+library("dplyr")
+library("RColorBrewer")
+library("ggthemes")
+library("ggrepel")
+library("chron")
+library("lubridate")
+library("xts")
+library("highcharter")
+
+```
+
+## Load Data
+
+Load the data and take a look at a few observations
+
+```{r echo = FALSE}
+
+data = read.csv("../input/ctrucks_clean.csv")
+
+head(data)
+str(data)
+summary(data)
+
+```
+
+## Data Wrangling
+
+```{r echo = FALSE}
+
+data$origin = as.factor(data$origin)
+data$supplier = as.factor(data$supplier)
+data$Date = ymd(data$Date)
+data$month = month(data$month, label = TRUE)
+data$week_day = weekdays(data$Date, abbreviate = TRUE)
+
+```
+
+The data has been wrangled and is ready 
+
+# Basic Visualizations 
+
+## Trucks Delivery
+
+### Overall Delivery Counts
+
+Which trucks made the most deliveries?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Trucks with the most deliveries over 3 years"}
+
+data %>%
+  group_by(truckid) %>%
+  summarize(freq = n()) %>%
+  top_n(20) %>%
+  ggplot(aes(reorder(truckid, freq), y = freq, fill = freq)) +   
+  geom_bar(stat = "identity", position = "dodge") +
+  xlab("Truck") +
+  ylab("Frequency") +
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25), axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=35, hjust = 0.2)) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) +
+  geom_text(aes(label = freq), hjust = -0.1, size = 8.5) +
+  ggtitle("The top 20 Trucks with the most deliveries") +
+  coord_flip()
+
+```
+
+Over the 3 years in question truck 7922GR01 made the most deliveries.  That is the guy you want to call up if you need a delivery, the truck seems to be a reliable one.
+
+### Year
+
+Which year saw the most deliveries?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Deliveries by Year"}
+
+data %>%
+  group_by(year) %>%
+  count() %>%
+  ggplot(aes(reorder(year, n), y = n, fill = n))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Year") +
+  ylab("Delivery Count") +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=25, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = n), vjust = -0.3, size = 10.5) +
+  ggtitle('Delivery Counts through the Years')
+
+```
+
+There was an increase from 2015 (223) to 2016 (244) which was the peak year and then there was a drop into 2017 which was the lowest with 204 total deliveries.
+
+### Month
+
+Which month saw the most deliveries?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Delivery Counts through the Years by Month"}
+
+data %>%
+  group_by(month, year) %>%
+  count() %>%
+  ggplot(aes(x = month, y = n, fill = n))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Month") +
+  ylab("Delivery Count") +
+  facet_wrap( ~ year) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = n), vjust = -0.3, size = 10.5) +
+  ggtitle('Delivery Counts through the Years by Month')
+
+```
+
+For all 3 years, the month of April saw the most deliveries, with March having the second most deliveries.  2017 saw deliveries in February and July whilst the other two years saw deliveries from March to June only.
+
+### Delivery by Day of the Week 
+
+Which day of the week has the most deliveries?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Delivery Counts through the Years by Month"}
+
+data %>%
+  group_by(week_day, month) %>%
+  count() %>%
+  ggplot(aes(reorder(week_day, n), y = n, fill = n))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Day") +
+  ylab("Delivery Count") +
+  facet_wrap( ~ month) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = n), vjust = -0.3, size = 10.5) +
+  ggtitle('Delivery Counts through the Days by Month')
+
+```
+
+Looking at the plot it is clear to see that for March and April, Monday is the day that most of the deliveries were dropped off.  There weren't that many deliveries on the weekend.
+
+## Number of Bags
+
+### Yearly Bag Counts
+
+What is the pattern of the number of bags delivered?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Total Bag by Year"}
+
+data %>%
+  group_by(year) %>%
+  summarise(total_bags = sum(nbags)) %>%
+  ggplot(aes(reorder(year, total_bags), y = total_bags, fill = total_bags))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Year") +
+  ylab("Bag Count") +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=25, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_bags), vjust = -0.3, size = 10.5) +
+  ggtitle('Total Bag Count through the Years')
+
+```
+
+2016 saw the most bags delivered followed by 2015 with 2017 having the lowest number of bags delivered.
+
+### Month
+
+Which month saw the most bags?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Bag Count through the Years by Month"}
+
+data %>%
+  group_by(month, year) %>%
+  summarise(total_bags = sum(nbags)) %>%
+  ggplot(aes(x = month, y = total_bags, fill = total_bags))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Month") +
+  ylab("Bag Count") +
+  facet_wrap( ~ year) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_bags), vjust = -0.3, size = 10.5) +
+  ggtitle('Bag Count through the Years by Month')
+
+```
+
+For all 3 years, April saw the most bags delivered, with March having the second most and May coming in third place.  
+
+### Daily Bag Count
+
+Which day saw the most bags delivered?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Bag Counts through the Years by day"}
+
+data %>%
+  group_by(week_day, month) %>%
+  summarise(total_bags = sum(nbags)) %>%
+  ggplot(aes(reorder(week_day, total_bags), y = total_bags, fill = total_bags))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Day") +
+  ylab("Bag Count") +
+  facet_wrap( ~ month) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_bags), vjust = -0.3, size = 10.5) +
+  ggtitle('Bag Count through the Days by Month')
+
+```
+
+As we have already seen Mondays has the most deliveries and thus the most bags are delivered on Mondays.
+
+## Net Weight
+
+### Yearly Weight
+
+What is the pattern when it comes to Net Weight?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Total Net Weight by Year"}
+
+data %>%
+  group_by(year) %>%
+  summarise(total_net_weight = sum(net_weight)) %>%
+  ggplot(aes(reorder(year, total_net_weight), y = total_net_weight, fill = total_net_weight))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Year") +
+  ylab("Net Weight") +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=25, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_net_weight), vjust = -0.3, size = 10.5) +
+  ggtitle('Total Net Weight through the Years')
+
+```
+
+2017 had the lowest net weight delivered with 2016 having the most.
+
+### Monthly Weight Delivery
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Net Weight through the Years by Month"}
+
+data %>%
+  group_by(month, year) %>%
+  summarise(total_net_weight = sum(net_weight)) %>%
+  ggplot(aes(x = month, y = total_net_weight, fill = total_net_weight))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Month") +
+  ylab("Net Weight") +
+  facet_wrap( ~ year) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_net_weight), vjust = -0.3, size = 10.5) +
+  ggtitle('Net Weight through the Years by Month')
+
+```
+
+For all 3 years, April saw the highest net weight, with March having the second most and May coming in third place.  
+
+### Daily Weight
+
+W Hat days saw the most weight delivered?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Net Weight through the Years by day"}
+
+data %>%
+  group_by(week_day, month) %>%
+  summarise(total_net_weight = sum(net_weight)) %>%
+  ggplot(aes(reorder(week_day, total_net_weight), y = total_net_weight, fill = total_net_weight))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Day") +
+  ylab("Net Weight") +
+  facet_wrap( ~ month) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = total_net_weight), vjust = -0.3, size = 10.5) +
+  ggtitle('Net Weight through the Days by Month')
+
+```
+
+In March and April most of the weight is delivered on Mondays and in May it is delivered on Tuesday.
+
+## Supplier
+
+### Overall Supplier COunt
+
+Which Suppliers had the most Deliveries?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Suppliers with the most deliveries over 3 years"}
+
+data %>%
+  group_by(supplier) %>%
+  summarize(freq = n()) %>%
+  top_n(20) %>%
+  ggplot(aes(reorder(supplier, freq), y = freq, fill = freq)) +   
+  geom_bar(stat = "identity", position = "dodge") +
+  xlab("Supplier") +
+  ylab("Frequency") +
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25), axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=35, hjust = 0.2)) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) +
+  geom_text(aes(label = freq), hjust = -0.1, size = 8.5) +
+  ggtitle("The top 20 Suppliers with the most deliveries") +
+  coord_flip()
+
+```
+
+Supplier 43 has made the most deliveries with 77 and is followed by supplier 85 at 49.
+
+### Yearly Supplier Count
+
+Which Year saw the most Suppliers?
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Total Suppliers by Year"}
+
+data %>%
+  select(year, supplier) %>%
+  group_by(year) %>%
+  summarise(Unique_Elements = n_distinct(supplier)) %>%
+  ggplot(aes(reorder(year, Unique_Elements), y = Unique_Elements, fill = Unique_Elements))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Year") +
+  ylab("Supplier Count") +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=25), axis.text.y = element_text(size = 25), axis.title.x = element_text(size=25),axis.text.x = element_text(size = 25), plot.title = element_text(size=35, hjust = 0.2)) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) +
+  geom_text(aes(label = Unique_Elements), vjust = -0.3, size = 10.5) +
+  ggtitle('Total Supplier Count through the Years')
+
+```
+
+Looking at the chart, it shows that 2016 saw the most suppliers with 60, followed by 2015 with 46 and 2017 had the lowest number of suppliers at 30.
+
+### Suppliers by Month
+
+Which month saw the most suppliers?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Supplier Count through the Years by Month"}
+
+data %>%
+  group_by(month, year) %>%
+  summarise(Unique_Elements = n_distinct(supplier)) %>%
+  ggplot(aes(x = month, y = Unique_Elements, fill = Unique_Elements))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Month") +
+  ylab("Supplier Count") +
+  facet_wrap( ~ year) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = Unique_Elements), vjust = -0.3, size = 10.5) +
+  ggtitle('Supplier Count through the Years by Month')
+
+```
+
+The peak number of suppliers vary by month through the years.  In 2015 March saw the most suppliers followed by April and the story was different in 2016 with April seeing the most suppliers.  2017 was very similar to 2016 in that April saw the most number of suppliers.
+
+### Daily Suppliers
+
+Which day did the suppliers like the best?
+
+```{r echo = FALSE, fig.align = 'default', warning = FALSE, fig.width=30, fig.height=30, fig.cap="Supplier Counts through the Years by day"}
+
+data %>%
+  group_by(week_day, month) %>%
+  summarise(Unique_Elements = n_distinct(supplier)) %>%
+  ggplot(aes(reorder(week_day, Unique_Elements), y = Unique_Elements, fill = Unique_Elements))  +   
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Day") +
+  ylab("Supplier Count") +
+  facet_wrap( ~ month) +
+  scale_fill_gradientn(name = '',colours = rev(brewer.pal(10,'Spectral'))) + 
+  theme(legend.position ='none',axis.title.y = element_text(size=50), axis.text.y = element_text(size = 25),axis.title.x = element_text(size=50),axis.text.x = element_text(size = 45), plot.title = element_text(size=50, hjust = 0.5), strip.text.x = element_text(size=25, face="bold"),
+          strip.background = element_rect(colour="red", fill="#CCCCFF")) +
+  geom_text(aes(label = Unique_Elements), vjust = -0.3, size = 10.5) +
+  ggtitle('Supplier Count through the Days by Month')
+
+```
+
+As we have already seen Mondays has the most deliveries and thus the most bags are delivered on Mondays.
+
+# Time Series 
+
+Time Series Plot of the Deliveries by year
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Time Series of Deliveries by Year"}
+
+by_date_2015 = data %>% 
+  filter(Date <= ("2016-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(Total = n())
+
+time_series = xts(by_date_2015$Total, order.by= by_date_2015$Date)
+
+hchart(time_series, name = "Number of Deliveries") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Total Deliveries for 2015") %>%
+  hc_legend(enabled = TRUE)
+
+by_date_2016 = na.omit(data) %>% 
+  filter(Date >= ("2016-01-01") & Date < ("2017-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(Total = n())
+
+time_series = xts(by_date_2016$Total, order.by= by_date_2016$Date)
+
+hchart(time_series, name = "Number of Deliveries") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Total Deliveries for 2016") %>%
+  hc_legend(enabled = TRUE)
+
+by_date_2017 = data %>% 
+  filter(Date >= ("2017-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(Total = n())
+
+time_series = xts(by_date_2017$Total, order.by= by_date_2017$Date)
+
+hchart(time_series, name = "Number of Deliveries") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Total Deliveries for 2017") %>%
+  hc_legend(enabled = TRUE)
+
+```
+
+
+Time Series Plots for the Number of Bags delivered
+
+```{r split = FALSE, fig.width=14, fig.height=10, fig.align='center', warning = FALSE, out.width="100%", fig.cap="Time Series of Number Bags by Year"}
+
+by_date_2015 = data %>% 
+  filter(Date <= ("2016-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(total_bags = sum(nbags))
+
+time_series = xts(by_date_2015$total_bags, order.by= by_date_2015$Date)
+
+hchart(time_series, name = "Number of Bags") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Bag Delivery for 2015") %>%
+  hc_legend(enabled = TRUE)
+
+by_date_2016 = na.omit(data) %>% 
+  filter(Date >= ("2016-01-01") & Date < ("2017-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(total_bags = sum(nbags))
+
+time_series = xts(by_date_2016$total_bags, order.by= by_date_2016$Date)
+
+hchart(time_series, name = "Number of Bags") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Bag Delivery for 2016") %>%
+  hc_legend(enabled = TRUE)
+
+by_date_2017 = data %>% 
+  filter(Date >= ("2017-01-01")) %>%
+  group_by(Date) %>% 
+  summarise(total_bags = sum(nbags))
+
+time_series = xts(by_date_2017$total_bags, order.by= by_date_2017$Date)
+
+hchart(time_series, name = "Number of Bags") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Bag Delivery for 2017") %>%
+  hc_legend(enabled = TRUE)
+
+```
+
+The time series plots show how things work through time across the years.
+
+#Conclusions
+
+Knowing who made the most deliveries allows a company to make decisions with this information.  As shown earlier we know that truck 7922GR01 made the most deliveries, this shows that the owner of the truck is one who can be counted on and they can be awarded more delivery requests.  Knowing when most of your deliveries show up can help with stuffing the factory.  Armed with the knowledge that most deliveries take place in April you can have more people in and the analysis showed that most deliveries are on Monday and you can have more people on hand to deal with the increased delivery load.  The month and days that see the most deliveries should also see the most number of bags and everything else related to the nuts, this should follow and is shown in the analysis above, April and Mondays see the most number of bags delivered and also the most weight delivered.  Everything is turned up in April and on Mondays according to the data.
+
+**Please do not hesitate to leave a comment and do not forget to upvote.  Thanks for taking the time to go through this.**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
